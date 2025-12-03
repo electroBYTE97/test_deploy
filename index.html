@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Marketplace C-2-C</title>
+    <!-- Carga de Tailwind CSS para un diseño limpio y responsivo -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Carga del cliente Socket.io (Necesario para el chat en tiempo real) -->
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        /* Estilos personalizados para la interfaz móvil */
+        body { font-family: 'Inter', sans-serif; background-color: #f7f7f7; }
+        #app-container {
+            max-width: 600px;
+            margin: 0 auto;
+            min-height: 100vh;
+            background-color: white;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        /* Estilo para el botón flotante (como en WhatsApp) */
+        .fab {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background-color: #25d366; /* Color de WhatsApp/Chat */
+            color: white;
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: background-color 0.3s;
+        }
+        .fab:hover { background-color: #1eac54; }
+    </style>
+</head>
+<body>
+
+<div id="app-container">
+    <!-- Contenedor Principal de la Aplicación -->
+    <div id="main-view" class="flex flex-col h-screen">
+
+        <!-- Header Común (Para Market, Chats) -->
+        <header id="app-header" class="p-4 bg-white border-b border-gray-200 sticky top-0 z-10">
+            <!-- El contenido del header se actualiza dinámicamente con JS -->
+        </header>
+
+        <!-- Contenido Dinámico de la Vista -->
+        <div id="content" class="flex-grow overflow-y-auto">
+            <!-- Aquí se cargarán las vistas de Marketplace, Chats, o Sala de Chat -->
+        </div>
+        
+        <!-- Navbar Inferior Fijo -->
+        <nav class="flex justify-around items-center h-16 bg-white border-t border-gray-200">
+            <button onclick="renderView('marketplace')" id="nav-marketplace" class="flex flex-col items-center text-gray-700 hover:text-green-600">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"></path></svg>
+                <span class="text-xs">Tienda</span>
+            </button>
+            <button onclick="renderView('chats')" id="nav-chats" class="flex flex-col items-center text-gray-700 hover:text-green-600">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.693C5.694 15.176 7.34 14 9 14h1M12 21a9 9 0 005-2.735 9 9 0 00-5-15.53 9 9 0 00-5 15.53z"></path></svg>
+                <span class="text-xs">Chats</span>
+            </button>
+            <button onclick="renderView('profile')" id="nav-profile" class="flex flex-col items-center text-gray-700 hover:text-green-600">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                <span class="text-xs">Yo</span>
+            </button>
+        </nav>
+
+        <!-- Botón de Acción Flotante (FAB) - Visible solo en Marketplace -->
+        <button id="fab-button" class="fab z-20 hidden" onclick="console.log('Publicar Nuevo Anuncio')">
+            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+        </button>
+
+    </div>
+</div>
+
+<script>
+    // Variables globales
+    let currentView = 'marketplace';
+    const contentDiv = document.getElementById('content');
+    const headerDiv = document.getElementById('app-header');
+    const fabButton = document.getElementById('fab-button');
+
+    // --- 1. CONFIGURACIÓN DE FIREBASE (Para la Tienda/Marketplace) ---
+    // NOTA: Para el chat usaremos Render/Socket.io para la conexión en tiempo real,
+    // pero guardaremos los mensajes en esta base de datos MySQL (vía PHP/Laravel).
+
+    // Variables globales (proporcionadas por el entorno de Canvas)
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+    let db;
+    let auth;
+    let userId = null;
+    let isAuthReady = false;
+
+    // Carga de módulos de Firebase
+    const firebaseAppScript = document.createElement('script');
+    firebaseAppScript.type = 'module';
+    firebaseAppScript.innerHTML = `
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, onSnapshot, query, where, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        if (Object.keys(firebaseConfig).length > 0) {
+            const app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+
+            // Importante: Habilitar logs para depuración en entornos de desarrollo
+            setLogLevel('Debug');
+
+            const signInUser = async () => {
+                try {
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                } catch (error) {
+                    console.error("Error en la autenticación:", error);
+                }
+            };
+
+            onAuthStateChanged(auth, (user) => {
+                if (user) {
+                    userId = user.uid;
+                } else {
+                    userId = 'anonymous_' + Math.random().toString(36).substring(2, 15);
+                }
+                isAuthReady = true;
+                console.log("Firebase Auth Ready. User ID:", userId);
+                // Una vez autenticado, cargamos la vista inicial
+                renderView(currentView);
+            });
+
+            signInUser();
+
+        } else {
+            console.error("Firebase no configurado. Usando modo offline simulado.");
+            isAuthReady = true;
+            userId = 'simulated_user_' + Math.random().toString(36).substring(2, 15);
+            renderView(currentView);
+        }
+
+        window.db = db;
+        window.auth = auth;
+        window.getFirestore = getFirestore;
+        window.collection = collection;
+        window.onSnapshot = onSnapshot;
+        window.query = query;
+        window.where = where;
+        window.doc = doc;
+        window.getDoc = getDoc;
+        window.setDoc = setDoc;
+        window.updateDoc = updateDoc;
+        window.deleteDoc = deleteDoc;
+        window.addDoc = addDoc;
+    `;
+    document.body.appendChild(firebaseAppScript);
+
+    // --- 2. CONFIGURACIÓN DEL CHAT (Socket.io) ---
+
+    // URL de tu servidor Node.js/Socket.io en Render.com (ejemplo)
+    const RENDER_SERVER_URL = "https://tu-proyecto-render.onrender.com"; // ¡Reemplazar con tu URL real!
+    let socket;
+
+    function connectChatServer() {
+        if (!isAuthReady) {
+            console.log("Esperando autenticación para conectar el chat...");
+            return;
+        }
+
+        console.log(`Intentando conectar a Socket.io en: ${RENDER_SERVER_URL}`);
+
+        // Opciones de conexión. Podrías enviar el token de usuario/ID aquí para autenticar.
+        socket = io(RENDER_SERVER_URL, {
+            query: { userId: userId }
+        });
+
+        socket.on('connect', () => {
+            console.log('Conectado al servidor de Chat (Render.com). Socket ID:', socket.id);
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Desconectado del servidor de Chat.');
+        });
+
+        socket.on('new_message', (msg) => {
+            console.log('Mensaje entrante:', msg);
+            // Aquí se manejaría la lógica de actualización del chat si está abierto
+            if (currentView.startsWith('chat-room-')) {
+                updateChatRoom(msg);
+            } else {
+                // Mostrar notificación en la lista de chats
+                alertMessage(`Nuevo mensaje de ${msg.senderId}`);
+            }
+        });
+
+        socket.on('error', (err) => {
+            console.error('Error del Socket:', err);
+        });
+    }
+
+    // --- 3. FUNCIONALIDADES SIMULADAS ---
+
+    // Simulación de productos para el Marketplace
+    const mockProducts = [
+        { id: 1, name: "Instalación Solar (5kW)", price: "2800 MLC", category: "Servicios", description: "Sistema completo con garantía de 10 años.", imageUrl: "https://placehold.co/100x100/38a169/ffffff?text=SOLAR" },
+        { id: 2, name: "Refrigerador de Segunda Mano", price: "250 USD", category: "Hogar", description: "En buen estado, poco uso.", imageUrl: "https://placehold.co/100x100/7c3aed/ffffff?text=NEVERA" },
+        { id: 3, name: "iPhone 11 usado", price: "600 USDT", category: "Electrónica", description: "Batería al 85%. Con protector.", imageUrl: "https://placehold.co/100x100/eab308/ffffff?text=IPHONE" },
+        { id: 4, name: "Vestido de Fiesta", price: "8000 CUP", category: "Ropa", description: "Nuevo con etiquetas.", imageUrl: "https://placehold.co/100x100/db2777/ffffff?text=VESTIDO" },
+    ];
+
+    // Simulación de conversaciones (Marketplace y Personales)
+    const mockChats = [
+        { id: 'store-1', name: "Tech Store Premium", lastMessage: "Nuevo stock de discos SSD.", isStore: true, unread: 2 },
+        { id: 'person-2', name: "Ana Martínez", lastMessage: "Nos vemos en 2 horas para la entrega.", isStore: false, unread: 1 },
+        { id: 'store-3', name: "Marketplace (General)", lastMessage: "Hay 5 anuncios nuevos cerca de ti.", isStore: true, unread: 5 },
+        { id: 'person-4', name: "Roberto Silva", lastMessage: "Te confirmo la permuta.", isStore: false, unread: 0 },
+    ];
+
+    const mockMessages = [
+        { id: 1, senderId: 'other-user', text: "Hola, ¿sigue disponible el refrigerador?", timestamp: "10:01 AM" },
+        { id: 2, senderId: userId, text: "Sí, aún lo tengo. ¿Estás interesado en verlo?", timestamp: "10:02 AM" },
+        { id: 3, senderId: 'other-user', text: "¿Aceptas MLC?", timestamp: "10:05 AM" },
+    ];
+
+    // Función para mostrar mensajes de la app (en lugar de alert())
+    function alertMessage(message) {
+        // En una app real, esto mostraría un modal o un toast
+        console.log(`[APP MESSAGE] ${message}`);
+        // Implementación simple de un toast para visualización
+        const toast = document.createElement('div');
+        toast.className = 'fixed top-4 right-4 p-3 bg-blue-500 text-white text-sm rounded-lg shadow-xl transition-opacity duration-300 z-50';
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.addEventListener('transitionend', () => toast.remove());
+        }, 3000);
+    }
+
+    // --- 4. MANEJO DE VISTAS (SPA) ---
+
+    function renderView(viewName, data = null) {
+        if (!isAuthReady) {
+            console.log("Esperando que la autenticación esté lista...");
+            return;
+        }
+
+        currentView = viewName;
+        contentDiv.innerHTML = ''; // Limpiar contenido
+        fabButton.classList.add('hidden'); // Ocultar FAB por defecto
+
+        // Resaltar el botón de navegación correcto
+        document.querySelectorAll('nav button').forEach(btn => {
+            btn.classList.remove('text-green-600', 'font-bold');
+            if (btn.id === `nav-${viewName}`) {
+                btn.classList.add('text-green-600', 'font-bold');
+            }
+        });
+
+        // Lógica de renderizado de cada vista
+        if (viewName === 'marketplace') {
+            renderMarketplaceView();
+        } else if (viewName === 'chats') {
+            renderChatsView();
+        } else if (viewName === 'profile') {
+            renderProfileView();
+        } else if (viewName.startsWith('chat-room-')) {
+            renderChatRoomView(data);
+        }
+    }
+
+    function renderHeader(title, backAction = null) {
+        let backButton = backAction ? 
+            `<button onclick="${backAction}" class="p-2 mr-2 text-gray-500 hover:text-gray-700">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+            </button>` : '';
+
+        headerDiv.innerHTML = `
+            <div class="flex items-center justify-between">
+                <div class="flex items-center">
+                    ${backButton}
+                    <h1 class="text-xl font-bold text-gray-800">${title}</h1>
+                </div>
+                <!-- Menú / Iconos de usuario, búsqueda, etc. -->
+                <div class="flex space-x-2">
+                    <button class="p-2 text-gray-500 hover:text-gray-700">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                    </button>
+                    <!-- Icono de Monedero/USDT, como en tu boceto -->
+                    <div class="flex items-center p-2 rounded-full bg-yellow-100 text-yellow-800 text-sm font-semibold">
+                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                        2450.75
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    // --- 5. VISTAS ESPECÍFICAS ---
+
+    function renderMarketplaceView() {
+        renderHeader('Marketplace C-2-C');
+        fabButton.classList.remove('hidden'); // Mostrar FAB para publicar
+
+        const productsHtml = mockProducts.map(p => `
+            <div class="flex p-3 border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onclick="viewProduct(${p.id})">
+                <img src="${p.imageUrl}" alt="${p.name}" class="w-20 h-20 rounded-lg object-cover mr-3 shadow-sm">
+                <div class="flex-grow">
+                    <div class="flex justify-between items-start">
+                        <h3 class="text-md font-semibold text-gray-800">${p.name}</h3>
+                        <span class="text-sm font-bold text-green-600">${p.price}</span>
+                    </div>
+                    <p class="text-sm text-gray-500 truncate">${p.description}</p>
+                    <div class="mt-1 flex justify-between items-center">
+                        <span class="text-xs text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full">${p.category}</span>
+                        <button onclick="event.stopPropagation(); startChatWithProduct(${p.id}, '${p.name}')" 
+                                class="text-xs bg-gray-200 text-gray-700 px-3 py-1 rounded-full hover:bg-green-500 hover:text-white transition-colors">
+                            Negociar (Chat)
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+
+        contentDiv.innerHTML = `
+            <div class="p-4">
+                <p class="text-gray-600 mb-3 text-sm">Artículos de segunda mano, servicios y tiendas premium.</p>
+                <div class="bg-white rounded-lg shadow-md divide-y divide-gray-100">
+                    ${productsHtml}
+                </div>
+            </div>
+        `;
+    }
+
+    function renderChatsView() {
+        renderHeader('Chats y Mensajes');
+        // El FAB no se muestra en la vista de Chats
+
+        const chatsHtml = mockChats.map(c => {
+            const isStoreClass = c.isStore ? 'bg-indigo-100 text-indigo-800' : 'bg-gray-100 text-gray-700';
+            const unreadBadge = c.unread > 0 ? 
+                `<span class="ml-2 bg-red-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full">${c.unread}</span>` : '';
+            
+            return `
+                <div class="flex items-center p-3 border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onclick="renderView('chat-room-${c.id}', { name: '${c.name}', id: '${c.id}' })">
+                    <div class="w-12 h-12 rounded-full flex items-center justify-center text-white text-lg font-bold mr-3 ${c.isStore ? 'bg-green-600' : 'bg-gray-500'}">
+                        ${c.name.charAt(0)}
+                    </div>
+                    <div class="flex-grow">
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-md font-semibold text-gray-800">${c.name}</h3>
+                            ${unreadBadge}
+                        </div>
+                        <p class="text-sm text-gray-500 truncate">${c.lastMessage}</p>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        contentDiv.innerHTML = `
+            <div class="bg-white rounded-lg shadow-md divide-y divide-gray-100">
+                ${chatsHtml}
+            </div>
+        `;
+
+        // Intentar conectar el chat al cargar la lista de chats
+        connectChatServer();
+    }
+
+    function renderChatRoomView(chatInfo) {
+        renderHeader(chatInfo.name, "renderView('chats')");
+        // El FAB no se muestra en el chat room
+
+        // Contenedor para los mensajes (lo hacemos flex-col-reverse para que el scroll esté abajo)
+        contentDiv.className = 'flex-grow overflow-y-auto flex flex-col-reverse p-4 space-y-3';
+        contentDiv.id = 'chat-messages';
+        
+        // Renderizar mensajes mock
+        const messagesHtml = mockMessages.reverse().map(msg => {
+            const isMe = msg.senderId === userId;
+            const alignClass = isMe ? 'justify-end' : 'justify-start';
+            const bubbleClass = isMe ? 'bg-green-500 text-white rounded-br-none' : 'bg-gray-200 text-gray-800 rounded-tl-none';
+            
+            return `
+                <div class="flex ${alignClass}">
+                    <div class="max-w-xs md:max-w-md lg:max-w-lg p-3 rounded-xl ${bubbleClass} shadow-sm">
+                        <p class="text-sm">${msg.text}</p>
+                        <span class="text-xs mt-1 block ${isMe ? 'text-green-200' : 'text-gray-500'} text-right">${msg.timestamp}</span>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        // Añadir el input de mensaje
+        contentDiv.innerHTML = messagesHtml;
+        
+        // Crear el área de entrada de mensaje
+        const inputArea = document.createElement('div');
+        inputArea.className = 'fixed bottom-16 left-0 right-0 max-w-lg mx-auto p-4 bg-white border-t border-gray-200 shadow-md flex items-center';
+        inputArea.innerHTML = `
+            <input id="chat-input" type="text" placeholder="Escribe un mensaje..." class="flex-grow p-3 border border-gray-300 rounded-full focus:ring-green-500 focus:border-green-500 transition-shadow">
+            <button onclick="sendMessage('${chatInfo.id}')" class="ml-2 w-12 h-12 flex items-center justify-center bg-green-500 text-white rounded-full hover:bg-green-600 transition-colors">
+                <svg class="w-6 h-6 transform rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
+            </button>
+        `;
+        document.body.appendChild(inputArea);
+
+        // Ajustar el padding del contenido principal para que el input no lo tape
+        document.getElementById('main-view').style.paddingBottom = '70px';
+    }
+
+    function renderProfileView() {
+        renderHeader('Mi Perfil');
+        // FAB no visible
+
+        contentDiv.innerHTML = `
+            <div class="p-4 flex flex-col items-center">
+                <div class="w-24 h-24 rounded-full bg-blue-500 text-white text-4xl flex items-center justify-center font-bold mb-4">
+                    ${userId ? userId.charAt(0).toUpperCase() : '?'}
+                </div>
+                <h2 class="text-xl font-semibold mb-1">Usuario Actual</h2>
+                <p class="text-sm text-gray-500 break-all mb-4">ID: <span class="text-gray-700 font-mono">${userId}</span></p>
+
+                <div class="w-full bg-white rounded-lg shadow-md p-4 divide-y divide-gray-100">
+                    <div class="py-2">
+                        <h3 class="font-bold text-gray-800">Datos de la Cuenta</h3>
+                        <p class="text-sm text-gray-600">Este ID (${userId}) es su identificador único para el chat y transacciones.</p>
+                    </div>
+                    <div class="py-2">
+                        <h3 class="font-bold text-gray-800">Mi Tienda Premium</h3>
+                        <button class="mt-2 w-full bg-indigo-500 text-white p-2 rounded-lg hover:bg-indigo-600 transition-colors" onclick="console.log('Gestionar Tienda')">
+                            Crear/Gestionar Anuncios Premium
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    // --- 6. LÓGICA DE INTERACCIÓN (CHATS) ---
+
+    function sendMessage(chatId) {
+        const input = document.getElementById('chat-input');
+        const text = input.value.trim();
+        if (!text) return;
+
+        const messageData = {
+            chatId: chatId,
+            senderId: userId,
+            text: text,
+            timestamp: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+        };
+
+        // 1. Enviar el mensaje al servidor de Render.com (Socket.io)
+        if (socket) {
+            socket.emit('send_message', messageData);
+            console.log('Mensaje enviado al Socket:', messageData);
+        } else {
+            alertMessage('Error: El chat no está conectado. Inténtelo de nuevo.');
+        }
+
+        // 2. Simular la adición inmediata a la UI (mejorar la experiencia del usuario)
+        addMessageToUi(messageData);
+
+        // 3. Limpiar el input
+        input.value = '';
+    }
+
+    function addMessageToUi(msg) {
+        const messagesContainer = document.getElementById('chat-messages');
+        if (!messagesContainer) return;
+        
+        const isMe = msg.senderId === userId;
+        const alignClass = isMe ? 'justify-end' : 'justify-start';
+        const bubbleClass = isMe ? 'bg-green-500 text-white rounded-br-none' : 'bg-gray-200 text-gray-800 rounded-tl-none';
+
+        const newMessageHtml = `
+            <div class="flex ${alignClass} animate-pulse-once">
+                <div class="max-w-xs md:max-w-md lg:max-w-lg p-3 rounded-xl ${bubbleClass} shadow-sm opacity-0" style="animation: fadeIn 0.3s forwards;">
+                    <p class="text-sm">${msg.text}</p>
+                    <span class="text-xs mt-1 block ${isMe ? 'text-green-200' : 'text-gray-500'} text-right">${msg.timestamp}</span>
+                </div>
+            </div>
+        `;
+
+        // Añadir el mensaje al final del contenedor
+        messagesContainer.insertAdjacentHTML('afterbegin', newMessageHtml);
+    }
+
+    function viewProduct(productId) {
+        const product = mockProducts.find(p => p.id === productId);
+        if (product) {
+            alertMessage(`Viendo detalles del producto: ${product.name} - ${product.description}`);
+            // Aquí se renderizaría la vista de detalle del producto
+        }
+    }
+
+    function startChatWithProduct(productId, productName) {
+        alertMessage(`Iniciando chat para el producto: ${productName}`);
+        renderView('chat-room-new', { name: `Negociación: ${productName}`, id: `neg-${productId}-${userId}` });
+    }
+
+    // Inicialización al cargar la página
+    window.onload = function() {
+        // La vista inicial se renderiza después de que Firebase/Auth esté listo (ver onAuthStateChanged)
+    }
+
+</script>
+
+</body>
+</html>
