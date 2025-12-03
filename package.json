@@ -1,0 +1,14 @@
+{
+  "name": "marketplace-chat-backend",
+  "version": "1.0.0",
+  "description": "Backend de Chat en tiempo real (Socket.io) para Marketplace.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2",
+    "mysql2": "^3.9.1"
+  }
+}
