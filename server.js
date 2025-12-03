@@ -2,14 +2,14 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const mysql = require('mysql2/promise'); // Usamos mysql2 con promesas para operaciones asÌncronas
+const mysql = require('mysql2/promise'); // Usamos mysql2 con promesas para operaciones as√≠ncronas
 
-// InicializaciÛn de Express y Servidor HTTP
+// Inicializaci√≥n de Express y Servidor HTTP
 const app = express();
 const server = http.createServer(app);
 
-// --- ConfiguraciÛn de Socket.io ---
-// Render requiere que especifiques la configuraciÛn de CORS para aceptar conexiones
+// --- Configuraci√≥n de Socket.io ---
+// Render requiere que especifiques la configuraci√≥n de CORS para aceptar conexiones
 // desde cualquier origen (el dominio de tu Marketplace, incluso si es una IP local)
 const io = new Server(server, {
     cors: {
@@ -18,56 +18,56 @@ const io = new Server(server, {
     }
 });
 
-// --- ConfiguraciÛn de ConexiÛn a Base de Datos MySQL (ProfeeHost) ---
+// --- Configuraci√≥n de Conexi√≥n a Base de Datos MySQL (ProfeeHost) ---
 // Render te permite definir Variables de Entorno (Environment Variables)
 // para ocultar datos sensibles. Usaremos estas variables para conectarnos
 // a tu base de datos en ProfeeHost.
 
-// Importante: Debes definir estas variables en el panel de configuraciÛn de Render
+// Importante: Debes definir estas variables en el panel de configuraci√≥n de Render
 const dbConfig = {
     host: process.env.DB_HOST || 'localhost',          // Ejemplo: 'mysql.profeehost.com'
     user: process.env.DB_USER || 'root',              // Ejemplo: 'user123'
     password: process.env.DB_PASSWORD || 'password',    // Ejemplo: 'TuClaveSecreta'
     database: process.env.DB_NAME || 'marketplace_db',  // Ejemplo: 'midb'
-    port: process.env.DB_PORT || 3306                   // Puerto est·ndar
+    port: process.env.DB_PORT || 3306                   // Puerto est√°ndar
 };
 
 let dbConnection;
 
 /**
- * Intenta establecer la conexiÛn a la base de datos MySQL.
+ * Intenta establecer la conexi√≥n a la base de datos MySQL.
  */
 async function connectToDatabase() {
     try {
         dbConnection = await mysql.createConnection(dbConfig);
-        console.log('? ConexiÛn a MySQL (ProfeeHost) establecida con Èxito.');
+        console.log('? Conexi√≥n a MySQL (ProfeeHost) establecida con √©xito.');
         // Un query de prueba simple para asegurar que funciona
         await dbConnection.execute('SELECT 1');
     } catch (error) {
         console.error('? Error al conectar a la base de datos MySQL:', error.message);
-        // Si falla, el chat puede seguir funcionando, pero los mensajes no ser·n persistentes.
+        // Si falla, el chat puede seguir funcionando, pero los mensajes no ser√°n persistentes.
     }
 }
 
 connectToDatabase();
 
-// --- LÛgica del Chat con Socket.io ---
+// --- L√≥gica del Chat con Socket.io ---
 
 io.on('connection', (socket) => {
-    // El 'userId' se envÌa desde el cliente (index.html) al conectarse
+    // El 'userId' se env√≠a desde el cliente (index.html) al conectarse
     const userId = socket.handshake.query.userId || 'usuario_anonimo';
     console.log(`Usuario conectado: ${userId} (Socket ID: ${socket.id})`);
 
-    // El cliente Node.js (Render.com) se encargar· de guardar y retransmitir los mensajes.
+    // El cliente Node.js (Render.com) se encargar√° de guardar y retransmitir los mensajes.
 
     socket.on('send_message', async (message) => {
         console.log(`[Mensaje Recibido de ${message.senderId}]: ${message.text}`);
 
-        // ** 1. LÛgica para guardar el mensaje en la base de datos MySQL **
+        // ** 1. L√≥gica para guardar el mensaje en la base de datos MySQL **
         if (dbConnection) {
             try {
                 // NOTA: 'chat_id' y 'receiver_id' son cruciales para el sistema tipo WhatsApp.
-                // AquÌ solo simulamos un chat general, pero luego usaremos un chat_id real.
+                // Aqu√≠ solo simulamos un chat general, pero luego usaremos un chat_id real.
                 const [result] = await dbConnection.execute(
                     'INSERT INTO messages (chat_id, sender_id, text, timestamp) VALUES (?, ?, ?, NOW())',
                     [message.chatId, message.senderId, message.text]
@@ -80,23 +80,23 @@ io.on('connection', (socket) => {
 
         // ** 2. Retransmitir el mensaje a la sala de chat (broadcast) **
         // En un chat real, se debe usar 'io.to(message.chatId).emit(...)'.
-        // AquÌ usamos 'broadcast' para simular que todos lo ven hasta implementar salas.
+        // Aqu√≠ usamos 'broadcast' para simular que todos lo ven hasta implementar salas.
 
         // Retransmitimos solo a los clientes en la misma sala (chatId)
         io.to(message.chatId).emit('new_message', message);
         
-        // Si es el primer mensaje, el sender tambiÈn lo debe recibir (opcional, si se implementa un ack)
-        // Por ahora, el cliente lo aÒade a la UI inmediatamente (optimizaciÛn).
+        // Si es el primer mensaje, el sender tambi√©n lo debe recibir (opcional, si se implementa un ack)
+        // Por ahora, el cliente lo a√±ade a la UI inmediatamente (optimizaci√≥n).
         
-        // ** Importante: Se debe unir el socket a la sala al iniciar la conexiÛn o al abrir el chat **
+        // ** Importante: Se debe unir el socket a la sala al iniciar la conexi√≥n o al abrir el chat **
         socket.join(message.chatId); 
     });
     
-    // SimulaciÛn: Unir al usuario a una sala al conectarse (por ejemplo, su ID de chat de negociaciÛn)
-    // En un sistema real, esto se harÌa cuando el usuario abre una conversaciÛn especÌfica.
+    // Simulaci√≥n: Unir al usuario a una sala al conectarse (por ejemplo, su ID de chat de negociaci√≥n)
+    // En un sistema real, esto se har√≠a cuando el usuario abre una conversaci√≥n espec√≠fica.
     socket.on('join_chat_room', (chatId) => {
         socket.join(chatId);
-        console.log(`${userId} se uniÛ a la sala: ${chatId}`);
+        console.log(`${userId} se uni√≥ a la sala: ${chatId}`);
     });
 
     socket.on('disconnect', () => {
@@ -105,10 +105,11 @@ io.on('connection', (socket) => {
 });
 
 // --- Inicio del Servidor ---
-// Render asigna un puerto din·mico a travÈs de la variable de entorno PORT
+// Render asigna un puerto din√°mico a trav√©s de la variable de entorno PORT
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
-    console.log(`?? Servidor Socket.io ejecut·ndose en el puerto ${PORT}`);
-    console.log('?? Esperando el primer tr·fico. Render se apagar· si no hay actividad.');
+    console.log(`?? Servidor Socket.io ejecut√°ndose en el puerto ${PORT}`);
+    console.log('?? Esperando el primer tr√°fico. Render se apagar√° si no hay actividad.');
+
 });
